@@ -5,132 +5,775 @@ from streamlit import cli as stcli
 from scipy.integrate import quad #Single integral
 from scipy.integrate import dblquad
 from PIL import Image
+from numba import njit, prange
 
-def KD_KT(K,delta,T):
-    #########Definitions#######################################################
-    def f01(x):#weibull densidade (componente fraco)
-        return (b1/a1)*((x/a1)**(b1-1))*np.exp(-(x/a1)**b1)
-    def f02(x):#weibull densidade (componente forte)
-        return (b2/a2)*((x/a2)**(b2-1))*np.exp(-(x/a2)**b2)
+def Analytics_Cost_rate(K,M,T):
+    # Funções preliminares (defeito, delaytime)
     def fx(x):
-        return (p*f01(x))+((1-p)*f02(x))
-    def fh(h):
-        return l*np.exp(-l*h)
-    def Fx(x):
-        return (p*(1-np.exp(-(x/a1)**b1)))+((1-p)*(1-np.exp(-(x/a2)**b2)))
-    def Rx(x):
-        return 1-Fx(x)
-    def Fh(h):
-        return 1-np.exp(-l*h)
+        return (b1/n1**b1)*(x**(b1-1))*np.exp(-(x/n1)**b1)
+    def Fx(x): #weibull acumulada densidade (DEFEITO MENOR)
+        return quad(fx, 0, x)[0]
+    def Rx(x): #
+        return quad(fx, x, np.inf)[0]
+    def fy(y):#weibull densidade (DEFEITO MAIOR)
+        return (b2/n2**b2)*(y**(b2-1))*np.exp(-(y/n2)**b2)
+    def Ry(y): #
+        return quad(fy, y, np.inf)[0]
+    def fh(h):#exponencial densidade DELAY TIME
+        return l_tx*np.exp(-l_tx*h)
+    def Fh(h):#exponencial acumulada DELAY TIME
+        return 1-np.exp(-l_tx*h)
     def Rh(h):
-        return np.exp(-l*h)
-    #####Scenarios#############################################################
-    #####Failure between inspections###########################################
-    def C1(K,delta,T):
-        PROB1=0
-        EC1=0
-        EL1=0
-        for i in range(0, K):
-            PROB1=PROB1+(((1-alfa)**i)*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], (delta[i+1]),0,lambda x:(delta[i+1])-x)[0]))
-            EL1=EL1+(((1-alfa)**i)*(dblquad(lambda h, x: (x+h)*fx(x)*fh(h), delta[i], (delta[i+1]),0,lambda x:(delta[i+1])-x)[0]))
-            EC1=EC1+(((i*ci)+cf)*(((1-alfa)**i)*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], (delta[i+1]),0,lambda x:(delta[i+1])-x)[0]))) + (((1-alfa)**i)*(dblquad(lambda h, x: cd*h*fx(x)*fh(h), delta[i], (delta[i+1]),0,lambda x:(delta[i+1])-x)[0]))
-        return PROB1, EC1, EL1
-    ####Replacement at inspection##############################################
-    def C2(K,delta,T):
-        PROB2=0
-        EC2=0
-        EL2=0
-        for i in range(0, K):
-            PROB2=PROB2+(((1-alfa)**i)*(1-beta)*(quad(lambda x: fx(x)*(1-Fh((delta[i+1])-x)),delta[i], (delta[i+1]))[0]))
-            EC2=EC2+((((i+1)*ci)+cr)*(((1-alfa)**i)*(1-beta)*(quad(lambda x: fx(x)*(1-Fh((delta[i+1])-x)),delta[i], (delta[i+1]))[0]))) + (((1-alfa)**i)*(1-beta)*(quad(lambda x: cd*(delta[i+1]-x)*fx(x)*(1-Fh((delta[i+1])-x)),delta[i], (delta[i+1]))[0]))
-            EL2=EL2+((delta[i+1])*(((1-alfa)**i)*(1-beta)*(quad(lambda x: fx(x)*(1-Fh((delta[i+1])-x)),delta[i], (delta[i+1]))[0])))
-        return PROB2, EC2, EL2
-    ####Failure after all inspections and before T#############################
-    def C3(K,delta,T):
-        PROB3=((1-alfa)**(K))*(dblquad(lambda h, x: fx(x)*fh(h), delta[K], T,0,lambda x:T-x)[0])
-        EC3=(((K*ci)+cf)*PROB3) + (((1-alfa)**(K))*(dblquad(lambda h, x: cd*h*fx(x)*fh(h), delta[K], T,0,lambda x:T-x)[0]))
-        EL3=((1-alfa)**(K))*(dblquad(lambda h, x: (x+h)*fx(x)*fh(h), delta[K], T,0,lambda x:T-x)[0])
-        return PROB3, EC3, EL3
-    ####Replacement at T#######################################################
-    def C4(K,delta,T):
-        PROB4=((1-alfa)**(K))*quad(lambda x: fx(x)*(1-Fh(T-x)),delta[K],T)[0]
-        EC4=(((K*ci)+cr)*PROB4) + (((1-alfa)**(K))*quad(lambda x: cd*(T-x)*fx(x)*(1-Fh(T-x)),delta[K],T)[0])
-        EL4=T*PROB4
-        return PROB4, EC4, EL4
-    ####Replacement at T without defect########################################
-    def C5(K,delta,T):
-        PROB5=((1-alfa)**(K))*Rx(T)
-        EC5=((K*ci)+cr)*PROB5
-        EL5=T*PROB5
-        return PROB5, EC5, EL5
-    ####Failure after some false negatives#####################################
-    def C6(K,delta,T):
-        PROB6=0
-        EC6=0
-        EL6=0
-        for i in range(0, K-1):
-            for j in range(i+1, K):
-                PROB6=PROB6+(((1-alfa)**i)*(beta**(j-i))*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], (delta[i+1]),lambda x:(delta[j])-x,lambda x:(delta[j+1])-x)[0]))
-                EL6=EL6+(((1-alfa)**i)*(beta**(j-i))*(dblquad(lambda h, x: (x+h)*fx(x)*fh(h), delta[i], (delta[i+1]),lambda x:(delta[j])-x,lambda x:(delta[j+1])-x)[0]))
-                EC6=EC6+(((j*ci)+cf)*(((1-alfa)**i)*(beta**(j-i))*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], (delta[i+1]),lambda x:(delta[j])-x,lambda x:(delta[j+1])-x)[0]))) + (((1-alfa)**i)*(beta**(j-i))*(dblquad(lambda h, x: cd*h*fx(x)*fh(h), delta[i], (delta[i+1]),lambda x:(delta[j])-x,lambda x:(delta[j+1])-x)[0]))          
-        return PROB6, EC6, EL6
-    ####Replacement at inspection after some false negativies##################
-    def C7(K,delta,T):
-        PROB7=0
-        EC7=0
-        EL7=0
-        for i in range(0, K-1):
-            for j in range(i+2,K+1):
-                PROB7=PROB7+(((1-alfa)**i)*(beta**(j-i-1))*(1-beta)*(quad(lambda x: fx(x)*Rh((delta[j])-x),delta[i], (delta[i+1]))[0]))
-                EC7=EC7+(((j*ci)+cr)*(((1-alfa)**i)*(beta**(j-i-1))*(1-beta)*(quad(lambda x: fx(x)*Rh((delta[j])-x),delta[i], (delta[i+1]))[0]))) + (((1-alfa)**i)*(beta**(j-i-1))*(1-beta)*(quad(lambda x: cd*(delta[j]-x)*fx(x)*Rh((delta[j])-x),delta[i], (delta[i+1]))[0]))
-                EL7=EL7+((delta[j])*(((1-alfa)**i)*(beta**(j-i-1))*(1-beta)*(quad(lambda x: fx(x)*Rh((delta[j])-x),delta[i], (delta[i+1]))[0])))
-        return PROB7, EC7, EL7
-    ####Replacement by false positives#########################################
-    def C8(K,delta,T):
-        PROB8=0
-        EC8=0
-        EL8=0
-        for i in range(0,K):
-            PROB8=PROB8+(((1-alfa)**i)*alfa*Rx(delta[i+1]))
-            EC8=EC8+(((i+1)*ci)+cr)*(((1-alfa)**i)*alfa*Rx(delta[i+1]))
-            EL8=EL8+(delta[i+1]*(((1-alfa)**i)*alfa*Rx(delta[i+1])))
-        return PROB8, EC8, EL8
-    ####Failure after sucessive false negatives after inspections##############
-    def C9(K,delta,T):
-        PROB9=0
-        EC9=0
-        EL9=0
-        for i in range(0,K):
-            PROB9=PROB9+((((1-alfa)**i)*(beta**(K-i))*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], delta[i+1],lambda x: delta[K]-x, lambda x:T-x)[0])))
-            EC9=EC9+((K*ci)+cf)*((((1-alfa)**i)*(beta**(K-i))*(dblquad(lambda h, x: fx(x)*fh(h), delta[i], delta[i+1],lambda x:delta[K]-x, lambda x:T-x)[0]))) + ((((1-alfa)**i)*(beta**(K-i))*(dblquad(lambda h, x: cd*h*fx(x)*fh(h), delta[i], delta[i+1],lambda x:delta[K]-x, lambda x:T-x)[0])))
-            EL9=EL9+((((1-alfa)**i)*(beta**(K-i))*(dblquad(lambda h, x: (x+h)*fx(x)*fh(h), delta[i], delta[i+1],lambda x:delta[K]-x, lambda x:T-x)[0])))
-        return PROB9, EC9, EL9
-    #####Replacement at T after sucessive false negatives######################
-    def C10(K,delta,T):
-        PROB10=0
-        EC10=0
-        EL10=0
-        for i in range(0,K):
-            PROB10=PROB10+(((1-alfa)**i)*(beta**(K-i))*(quad(lambda x: fx(x)*Rh(T-x),delta[i], (delta[i+1]))[0]))
-            EC10=EC10+((K*ci)+cr)*(((1-alfa)**i)*(beta**(K-i))*(quad(lambda x: fx(x)*Rh(T-x),delta[i], (delta[i+1]))[0])) + (((1-alfa)**i)*(beta**(K-i))*(quad(lambda x: cd*(T-x)*fx(x)*Rh(T-x),delta[i], (delta[i+1]))[0]))
-            EL10=EL10+T*(((1-alfa)**i)*(beta**(K-i))*(quad(lambda x: fx(x)*Rh(T-x),delta[i], (delta[i+1]))[0]))
-        return PROB10, EC10, EL10
+        return np.exp(-l_tx*h)
 
-    C1=C1(K,delta,T)
-    C2=C2(K,delta,T)
-    C3=C3(K,delta,T)
-    C4=C4(K,delta,T)
-    C5=C5(K,delta,T)
-    C6=C6(K,delta,T)
-    C7=C7(K,delta,T)
-    C8=C8(K,delta,T)
-    C9=C9(K,delta,T)
-    C10=C10(K,delta,T)
+    # CENÁRIO 1 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e falha DEGRADAÇÃO chegam entre inspeções menores
+    def Scenario1():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda h,y,x:np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda h,y,x:c*h*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Lifetime+=tplquad(lambda h,y,x:(x+h+y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 2 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e falha DEGRADAÇÃO chegam entre inspeções menores
+    def Scenario2():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda h,w,x:np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda h,w,x:c*h*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Lifetime+=tplquad(lambda h,w,x:(x+h+w)*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
 
-    TOTAL_EC=C1[1]+C2[1]+C3[1]+C4[1]+C5[1]+C6[1]+C7[1]+C8[1]+C9[1]+C10[1]
-    TOTAL_EL=C1[2]+C2[2]+C3[2]+C4[2]+C5[2]+C6[2]+C7[2]+C8[2]+C9[2]+C10[2]
-    return TOTAL_EC/TOTAL_EL
+    # CENÁRIO 3 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e falha CHOQUE chegam entre inspeções menores
+    def Scenario3():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda q,y,x:np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda q,y,x:c*q*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Lifetime+=tplquad(lambda q,y,x:(x+q+y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,y:0,lambda x,y:(l*M+i)*T-(x+y))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
 
+    # CENÁRIO 4 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e falha CHOQUE chegam entre inspeções menores
+    def Scenario4():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda q,w,x:np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda q,w,x:c*q*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Lifetime+=tplquad(lambda q,w,x:(x+q+w)*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x,lambda x,w:0,lambda x,w:(l*M+i)*T-(x+w))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 5 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e falha DEGRADAÇÃO chegam entre inspeções menores
+    def Scenario5():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda h,y,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda h,y,z:c*h*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Lifetime+=tplquad(lambda h,y,z:(z+h+y)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 6 - Defeito menor CHOQUE, defeito maior CHOQUE e falha DEGRADAÇÃO chegam entre inspeções menores
+    def Scenario6():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda h,w,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda h,w,z:c*h*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Lifetime+=tplquad(lambda h,w,z:(z+h+w)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    
+    # CENÁRIO 7 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e falha CHOQUE chegam entre inspeções menores
+    def Scenario7():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda q,y,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda q,y,z:c*q*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Lifetime+=tplquad(lambda q,y,z:(z+q+y)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,y:0,lambda z,y:(l*M+i)*T-(z+y))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    
+    # CENÁRIO 8 - Defeito menor CHOQUE, defeito maior CHOQUE e falha CHOQUE chegam entre inspeções menores
+    def Scenario8():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M+1):
+                P=tplquad(lambda q,w,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Cost+=((l*cb+((l*(M-1)+(i-1))*ci)+cf)*P)+tplquad(lambda q,w,z:c*q*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Lifetime+=tplquad(lambda q,w,z:(z+q+w)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z,lambda z,w:0,lambda z,w:(l*M+i)*T-(z+w))[0]
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 9 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e falha DEGRADAÇÃO chegam entre inspeções menor após um ou mais falso negativo
+    def Scenario9():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda h,y,x:np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda h,y,x:c*h*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda h,y,x:(x+h+y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    
+    # CENÁRIO 10 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e falha DEGRADAÇÃO chegam entre inspeções menor após um ou mais falso negativo
+    def Scenario10():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda h,w,x:np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda h,w,x:c*h*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda h,w,x:(x+h+w)*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 11 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e falha CHOQUE chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario11():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda q,y,x:np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda q,y,x:c*q*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda q,y,x:(x+q+y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,y:0,lambda x,y:(l*M+j)*T-(x+y))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 12 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e falha CHOQUE chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario12():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda q,w,x:np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda q,w,x:c*q*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda q,w,x:(x+q+w)*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*np.exp(-l_tx*q),(l*M+(i-1))*T,(l*M+i)*T,lambda x:(l*M+j-1)*T-x,lambda x:(l*M+j)*T-x,lambda x,w:0,lambda x,w:(l*M+j)*T-(x+w))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 13 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e falha DEGRADAÇÃO chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario13():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda h,y,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda h,y,z:c*h*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda h,y,z:(z+h+y)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 14 - Defeito menor CHOQUE, defeito maior CHOQUE e falha DEGRADAÇÃO chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario14():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda h,w,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda h,w,z:c*h*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda h,w,z:(z+h+w)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*np.exp(-mi_falha*h)*fh(h),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 15 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e falha CHOQUE chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario15():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda q,y,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda q,y,z:c*q*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda q,y,z:(z+q+y)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,y:0,lambda z,y:(l*M+j)*T-(z+y))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 16 - Defeito menor CHOQUE, defeito maior CHOQUE e falha CHOQUE chegam entre inspeções menores após um ou mais falso negativo
+    def Scenario16():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M+1):
+                for i in range(1,j):
+                    P=(b**(j-i))*tplquad(lambda q,w,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Cost+=((l*cb+((l*(M-1)+(j-1))*ci)+cf)*P)+(b**(j-i))*tplquad(lambda q,w,z:c*q*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Lifetime+=(b**(j-i))*tplquad(lambda q,w,z:(z+q+w)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*mi_falha*np.exp(-mi_falha*q)*(np.exp(-l_tx*q)),(l*M+(i-1))*T,(l*M+i)*T,lambda z:(l*M+j-1)*T-z,lambda z:(l*M+j)*T-z,lambda z,w:0,lambda z,w:(l*M+j)*T-(z+w))[0]
+                    Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 17 – Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO chega no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor.
+    def Scenario17():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M):
+                P=dblquad(lambda y,x:np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*Rh((l*M+i)*T-(x+y))*np.exp(-mi_falha*((l*M+i)*T-(x+y))),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x)[0]
+                Cost+=((l*cb+((l*(M-1))+i)*ci+cr)*P)+dblquad(lambda y,x:c*((l*M+i)*T-x-y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*Rh((l*M+i)*T-(x+y))*np.exp(-mi_falha*((l*M+i)*T-(x+y))),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x)[0]
+                Lifetime+=(((l*M)+i)*T)*P
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 18 – Defeito menor DEGRADAÇÃO, defeito maior CHOQUE chega no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor.
+    def Scenario18():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M):
+                P=dblquad(lambda w,x:np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*(np.exp(-(w/n2)**b2))*Rh((l*M+i)*T-(x+w))*np.exp(-mi_falha*((l*M+i)*T-(x+w))),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x)[0]
+                Cost+=((l*cb+((l*(M-1))+i)*ci+cr)*P)+dblquad(lambda w,x:c*((l*M+i)*T-x-w)*(np.exp(-mi_menor*x) * fx(x))*(mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+i)*T-(x+w)) * np.exp(-mi_falha*((l*M+i)*T-(x+w))),(l*M+(i-1))*T,(l*M+i)*T,lambda x:0,lambda x:(l*M+i)*T-x)[0]
+                Lifetime+=(((l*M)+i)*T)*P
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 19 – Defeito menor CHOQUE, defeito maior DEGRADAÇÃO chega no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor.
+    def Scenario19():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M):
+                P=dblquad(lambda y,z:mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*Rh((l*M+i)*T-(z+y))*np.exp(-mi_falha*((l*M+i)*T-(z+y))),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z)[0]
+                Cost+=((l*cb+((l*(M-1))+i)*ci+cr)*P)+dblquad(lambda y,z:c*((l*M+i)*T-z-y)*mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))*np.exp(-mi_maior*y)*fy(y)*Rh((l*M+i)*T-(z+y))*np.exp(-mi_falha*((l*M+i)*T-(z+y))),(l*M+(i-1))*T,(l*M+i)*T,lambda z:0,lambda z:(l*M+i)*T-z)[0]
+                Lifetime+=(((l*M)+i)*T)*P
+                Probability+=P
+        return Cost,Lifetime,Probability
+    
+    # CENÁRIO 20 – Defeito menor CHOQUE, defeito maior CHOQUE chega no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor.
+    def Scenario20():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M):
+                  P=(dblquad(lambda w,z:(mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+i)*T-(z+w)) * np.exp(-mi_falha*((l*M+i)*T-(z+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda z: 0, lambda z: (l*M+i)*T-z)[0])
+                  Cost+=((l * cb) + (((l*(M-1))+i) * ci)+ cr) * P + (dblquad(lambda w,z:(c*((l*M+i)*T-z-w))*(mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+i)*T-(z+w)) * np.exp(-mi_falha*((l*M+i)*T-(z+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda z: 0, lambda z: (l*M+i)*T-z)[0])
+                  Lifetime+=((((l*(M))+i) * T) * P)
+                  Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 21 –  Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor APÓS FALSO NEGATIVO.
+    def Scenario21():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M):
+                for i in range(1,j):
+                    P=(b**(j-i)) * (dblquad(lambda y,x: (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l*M+j)*T-(x+y)) * np.exp(-mi_falha*((l*M+j)*T-(x+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x:  ((l*M+(j-1))*T)-x, lambda x: ((l*M+j)*T)-x)[0])
+                    Cost+=(((l * cb) + (((l*(M-1))+j) * ci) + cr) * P) + (b**(j-i)) * (dblquad(lambda y,x: (c*((l*M+j)*T-x-y))*(np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l*M+j)*T-(x+y)) * np.exp(-mi_falha*((l*M+j)*T-(x+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x:  ((l*M+(j-1))*T)-x, lambda x: ((l*M+j)*T)-x)[0])
+                    Lifetime+=((((l*(M))+j) * T) * P)
+                    Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 22 –  Defeito menor DEGRADAÇÃO, defeito maior CHOQUE no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor APÓS FALSO NEGATIVO.
+    def Scenario22():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M):
+                for i in range(1,j):
+                    P=(b**(j-i)) * (dblquad(lambda w,x: (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+j)*T-(x+w)) * np.exp(-mi_falha*((l*M+j)*T-(x+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda x:  ((l*M+(j-1))*T)-x, lambda x: ((l*M+j)*T)-x)[0])
+                    Cost+=(((l * cb) + (((l*(M-1))+j) * ci) + cr) * P) + (b**(j-i)) * (dblquad(lambda w,x: (c*((l*M+j)*T-x-w))*(np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+j)*T-(x+w)) * np.exp(-mi_falha*((l*M+j)*T-(x+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda x:  ((l*M+(j-1))*T)-x, lambda x: ((l*M+j)*T)-x)[0])
+                    Lifetime+=((((l*(M))+j) * T) * P)
+                    Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 23 –  Defeito menor CHOQUE, defeito maior DEGRADAÇÃO no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor APÓS FALSO NEGATIVO.
+    def Scenario23():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M):
+                for i in range(1,j):
+                    P=(b**(j-i)) * (dblquad(lambda y,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l*M+j)*T-(z+y)) * np.exp(-mi_falha*((l*M+j)*T-(z+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda z:  ((l*M+(j-1))*T)-z, lambda z: ((l*M+j)*T)-z)[0])
+                    Cost+=(((l * cb) + (((l*(M-1))+j) * ci) + cr) * P) + (b**(j-i)) * (dblquad(lambda y,z: (c*((l*M+j)*T-z-y))*(mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l*M+j)*T-(z+y)) * np.exp(-mi_falha*((l*M+j)*T-(z+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda z:  ((l*M+(j-1))*T)-z, lambda z: ((l*M+j)*T)-z)[0])
+                    Lifetime+=((((l*(M))+j) * T) * P)
+                    Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 24 –  Defeito menor CHOQUE, defeito maior CHOQUE no mesmo intervalo de inspeções e substituição preventiva ocorre em inspeção menor APÓS FALSO NEGATIVO.
+    def Scenario24():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for j in range(2,M):
+                for i in range(1,j):
+                    P=(b**(j-i)) * (dblquad(lambda w,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+j)*T-(z+w)) * np.exp(-mi_falha*((l*M+j)*T-(z+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda z:  ((l*M+(j-1))*T)-z, lambda z: ((l*M+j)*T)-z)[0])
+                    Cost+=(((l * cb) + (((l*(M-1))+j) * ci) + cr) * P) + (b**(j-i)) * (dblquad(lambda w,z: (c*((l*M+j)*T-z-w))*(mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l*M+j)*T-(z+w)) * np.exp(-mi_falha*((l*M+j)*T-(z+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda z:  ((l*M+(j-1))*T)-z, lambda z: ((l*M+j)*T)-z)[0])
+                    Lifetime+=((((l*(M))+j) * T) * P)
+                    Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 25 - Defeito menor chega por degradação e é substituído em inspeção menor
+    def Scenario25():
+        Probability=0
+        Cost = 0
+        Lifetime = 0
+        for l in range(0, K):
+            for i in range(1, M):
+                P = (1-b) * quad(lambda x: np.exp(-mi_menor*x) * fx(x) * Ry((l*M+i)*T-x) * np.exp(-mi_maior*(((l*M+i)*T-x))), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                Cost += (((l * cb) + (((l*(M-1))+i) * ci) + cr) * P)
+                Lifetime += ((((l*(M))+i) * T) * P)
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 26 - Defeito menor chega por choque e é substituído em inspeção menor
+    def Scenario26():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K):
+            for i in range(1,M):
+                P=(1-b) * quad(lambda z: mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1)) * Ry((l*M+i)*T-z) * np.exp(-mi_maior*(((l*M+i)*T-z))), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                Cost+=(((l * cb) + (((l*(M-1))+i) * ci)+ cr) * P)
+                Lifetime+=((((l*(M))+i) * T) * P)
+                Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 27 - Defeito menor chega por degradação e é substituído em inspeção menor FALSO NEGATIVO
+    def Scenario27():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K):
+            for j in range(2, M):
+                for i in range(1, j):
+                    P = (b**(j-i)) * (1-b) * quad(lambda x: (np.exp(-mi_menor*x) * fx(x)) * Ry((l*M+j)*T-x) * np.exp(-mi_maior*((l*M+j)*T-x)), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                    Cost += (((l * cb) + (((l*(M-1)) + j) * ci) + cr) * P)
+                    Lifetime += ((((l*(M)) + j) * T) * P)
+                    Probability+=P
+        return Cost, Lifetime,Probability
+
+
+
+    # CENÁRIO 28 - Defeito menor chega por choque e é substituído em inspeção menor FALSO NEGATIVO
+    def Scenario28():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K):
+            for j in range(2, M):
+                for i in range(1, j):
+                    P = (b**(j-i)) * (1-b) * quad(lambda z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * Ry((l*M+j)*T-z) * np.exp(-mi_maior*((l*M+j)*T-z)), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                    Cost += (((l*cb) + (((l*(M-1)) + j) * ci) + cr) * P)
+                    Lifetime += (((l*(M)) + j) * T) * P
+                    Probability+=P
+        return Cost, Lifetime,Probability
+
+
+    # CENÁRIO 29 - Defeito menor chega por degradação, entre inspeções menores, e é substituído em inspeção maior
+    def Scenario29():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K-1):
+            for i in range(1, M+1):
+                P = (b**(M-i)) * quad(lambda x: (np.exp(-mi_menor*x) * fx(x)) * Ry((l+1)*M*T-x) * np.exp(-mi_maior*((l+1)*M*T-x)), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                Cost += ((((l+1)*cb) + ((l+1)*(M-1)*ci) + cr) * P)
+                Lifetime += ((l+1)*M*T) * P
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+
+    # CENÁRIO 30 - Defeito menor chega por choque e é substituído em inspeção maior
+    def Scenario30():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K-1):
+            for i in range(1, M+1):
+                P = (b**(M-i)) * quad(lambda z: (mi_menor*np.exp(-mi_menor*z)*(np.exp(-(z/n1)**b1))) * Ry((l+1)*M*T-z) * np.exp(-mi_maior*((l+1)*M*T-z)), (l*M+(i-1))*T, (l*M+i)*T)[0]
+                Cost += ((((l+1)*cb) + ((l+1)*(M-1)*ci) + cr) * P)
+                Lifetime += ((l+1)*M*T) * P
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 31 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e substituição em inspeção maior.
+    def Scenario31():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K-1):
+            P = dblquad(lambda y, x: (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l+1)*M*T-(x+y)) * np.exp(-mi_falha*((l+1)*M*T-(x+y))), ((l+1)*M-1)*T, (l+1)*M*T, lambda x: 0, lambda x: (l+1)*M*T - x)[0]
+            Cost += ((((l+1)*cb) + ((l+1)*(M-1)*ci) + cr) * P) + dblquad(lambda y, x: (c*((l+1)*M*T-x-y))*(np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l+1)*M*T-(x+y)) * np.exp(-mi_falha*((l+1)*M*T-(x+y))), ((l+1)*M-1)*T, (l+1)*M*T, lambda x: 0, lambda x: (l+1)*M*T - x)[0]
+            Lifetime += ((l+1)*M*T) * P
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+     # CENÁRIO 32 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e substituição em inspeção maior.
+    def Scenario32():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K-1):
+            P = dblquad(lambda w, x: (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(x+w)) * np.exp(-mi_falha*((l+1)*M*T-(x+w))), ((l+1)*M-1)*T, (l+1)*M*T, lambda x: 0, lambda x: (l+1)*M*T - x)[0]
+            Cost += ((((l+1)*cb) + ((l+1)*(M-1)*ci) + cr) * P) + dblquad(lambda w, x: (c*((l+1)*M*T-x-w))*(np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(x+w)) * np.exp(-mi_falha*((l+1)*M*T-(x+w))), ((l+1)*M-1)*T, (l+1)*M*T, lambda x: 0, lambda x: (l+1)*M*T - x)[0]
+            Lifetime += ((l+1)*M*T) * P
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 33 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e substituição em inspeção maior.
+    def Scenario33():
+        Probability=0
+        Cost = 0; Lifetime = 0
+        for l in range(0, K-1):
+            P = dblquad(lambda y, z: (mi_menor*np.exp(-mi_menor*z)*np.exp(-(z/n1)**b1)*np.exp(-mi_maior*y)*fy(y)*Rh((l+1)*M*T-(z+y))*np.exp(-mi_falha*((l+1)*M*T-(z+y)))), ((l+1)*M-1)*T, (l+1)*M*T, lambda z: 0, lambda z: (l+1)*M*T - z)[0]
+            Cost += ((((l+1)*cb)+((l+1)*(M-1)*ci)+cr)*P) + dblquad(lambda y, z: (c*((l+1)*M*T-z-y)*mi_menor*np.exp(-mi_menor*z)*np.exp(-(z/n1)**b1)*np.exp(-mi_maior*y)*fy(y)*Rh((l+1)*M*T-(z+y))*np.exp(-mi_falha*((l+1)*M*T-(z+y)))), ((l+1)*M-1)*T, (l+1)*M*T, lambda z: 0, lambda z: (l+1)*M*T - z)[0]
+            Lifetime += ((l+1)*M*T)*P
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+
+    # CENÁRIO 34 - Defeito menor CHOQUE, defeito maior CHOQUE e substituição em inspeção maior.
+    def Scenario34():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K-1):
+            P=(dblquad(lambda w,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(z+w)) * np.exp(-mi_falha*(((l+1)*M*T-(z+w)))), ((l+1)*M-1)*T , (l+1)*M*T, lambda z: 0, lambda z: ((l+1)*M*T-z))[0])
+            Cost+=((((l+1) * cb) + ((l+1)*(M-1) * ci)+ cr) * P) + (dblquad(lambda w,z: (c*((l+1)*M*T-z-w))*(mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(z+w)) * np.exp(-mi_falha*(((l+1)*M*T-(z+w)))), ((l+1)*M-1)*T , (l+1)*M*T, lambda z: 0, lambda z: ((l+1)*M*T-z))[0])
+            Lifetime+=(((l+1)*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 35 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e substituição em inspeção maior APÓS UM OU MAIS FALSO NEGATIVOS.
+    def Scenario35():
+        Probability=0
+        Cost = 0
+        Lifetime = 0
+        for l in range(0, K-1):
+            for i in range(1, M):
+                P = (b**(M-i)) * dblquad(lambda y, x: np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*Rh((l+1)*M*T-(x+y))*np.exp(-mi_falha*((l+1)*M*T-(x+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0]
+                Cost += ((l+1)*cb + (l+1)*(M-1)*ci + cr)*P + (b**(M-i)) * dblquad(lambda y, x: c*((l+1)*M*T - x - y)*np.exp(-mi_menor*x)*fx(x)*np.exp(-mi_maior*y)*fy(y)*Rh((l+1)*M*T-(x+y))*np.exp(-mi_falha*((l+1)*M*T-(x+y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0]
+                Lifetime += ((l+1)*M*T)*P
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 36 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE e substituição em inspeção maior APÓS UM OU MAIS FALSO NEGATIVOS.
+    def Scenario36():
+        Probability=0
+        Cost = 0
+        Lifetime = 0
+        for l in range(0, K-1):
+            for i in range(1, M):
+                P = (b**(M-i)) * dblquad(lambda w, x: np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*np.exp(-(w/n2)**b2)*Rh((l+1)*M*T-(x+w))*np.exp(-mi_falha*((l+1)*M*T-(x+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0]
+                Cost += ((l+1)*cb + (l+1)*(M-1)*ci + cr)*P + (b**(M-i)) * dblquad(lambda w, x: c*((l+1)*M*T - x - w)*np.exp(-mi_menor*x)*fx(x)*mi_maior*np.exp(-mi_maior*w)*np.exp(-(w/n2)**b2)*Rh((l+1)*M*T-(x+w))*np.exp(-mi_falha*((l+1)*M*T-(x+w))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0]
+                Lifetime += ((l+1)*M*T)*P
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 37 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO e substituição em inspeção maior APÓS UM OU MAIS FALSO NEGATIVOS.
+    def Scenario37():
+        Probability=0
+        Cost = 0
+        Lifetime = 0
+        for l in range(0, K-1):
+            for i in range(1, M):
+                P = (b**(M-i)) * dblquad(lambda y, z: (mi_menor*np.exp(-mi_menor*z) * np.exp(-(z/n1)**b1)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l+1)*M*T - (z + y)) * np.exp(-mi_falha*((l+1)*M*T - (z + y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0]
+                Cost += (((l+1)*cb + (l+1)*(M-1)*ci + cr) * P + (b**(M-i)) * dblquad(lambda y, z: c*((l+1)*M*T - z - y) * (mi_menor*np.exp(-mi_menor*z) * np.exp(-(z/n1)**b1)) * (np.exp(-mi_maior*y) * fy(y)) * Rh((l+1)*M*T - (z + y)) * np.exp(-mi_falha*((l+1)*M*T - (z + y))), (l*M+(i-1))*T, (l*M+i)*T, lambda x: ((l+1)*M*T - T - x), lambda x: ((l+1)*M*T - x))[0])
+                Lifetime += ((l+1)*M*T) * P
+                Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 38 - Defeito menor CHOQUE, defeito maior CHOQUE e substituição em inspeção maior APÓS UM OU MAIS FALSO NEGATIVOS.
+    def Scenario38():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for l in range(0,K-1):
+            for i in range(1,M):
+                P=(b**(M-i)) * (dblquad(lambda w,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(z+w)) * np.exp(-mi_falha*(((l+1)*M*T-(z+w)))), (l*M+(i-1))*T , (l*M+i)*T, lambda z: (((l+1)*M*T)-T-z), lambda z: ((l+1)*M*T-z))[0])
+                Cost+=((((l+1) * cb) + ((l+1)*(M-1) * ci)+ cr) * P) + (b**(M-i)) * (dblquad(lambda w,z: (c*((l+1)*M*T-z-w)) * (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh((l+1)*M*T-(z+w)) * np.exp(-mi_falha*(((l+1)*M*T-(z+w)))), (l*M+(i-1))*T , (l*M+i)*T, lambda z: (((l+1)*M*T)-T-z), lambda z: ((l+1)*M*T-z))[0])
+                Lifetime+=(((l+1)*M * T) * P)
+                Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 39 -Defeito menor chega por degradação de e é substituído em inspeção maior em KMT
+    def Scenario39():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M+1):
+            P=(b**(M-i)) * (quad(lambda x: (np.exp(-mi_menor*x) * fx(x)) * Ry(K*M*T-x) * np.exp(-mi_maior*((K*M*T-x))), (((K-1)*M+(i-1)))*T, (((K-1)*M+i))*T)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P)
+            Lifetime+=((K*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 40 -Defeito menor chega por choque de e é substituído em inspeção maior em KMT
+    def Scenario40():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M+1):
+            P=(b**(M-i)) * (quad(lambda z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * Ry(K*M*T-z) * np.exp(-mi_maior*((K*M*T-z))), (((K-1)*M+(i-1)))*T, (((K-1)*M+i))*T)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P)
+            Lifetime+=((K*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 41 - Defeito menor por DEGRADAÇÃO na ith-1 inspeção, defeito maior DEGRADAÇÃO e substituição em KMT
+    def Scenario41():
+        P=(dblquad(lambda y,x: (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(x+y)) * np.exp(-mi_falha*((K*M*T-(x+y)))), (K*M-1)*T, K*M*T, lambda x: 0, lambda x: K*M*T-x)[0])
+        Cost=((((K-1)*cb) + ((K)*(M-1)*ci)+ cr) * P) + (dblquad(lambda y,x: (c*(K*M*T-x-y)) * (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(x+y)) * np.exp(-mi_falha*((K*M*T-(x+y)))), (K*M-1)*T, K*M*T, lambda x: 0, lambda x: K*M*T-x)[0])
+        Lifetime=((K*M*T) * P)
+        return Cost, Lifetime,P
+
+    # CENÁRIO 42 - Defeito menor por DEGRADAÇÃO na ith-1 inspeção, defeito maior CHOQUE e substituição em KMT
+    def Scenario42():
+        P=(dblquad(lambda w,x: (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(x+w)) * np.exp(-mi_falha*((K*M*T-(x+w)))), (K*M-1)*T, K*M*T, lambda x: 0, lambda x: K*M*T-x)[0])
+        Cost=((((K-1)*cb) + ((K)*(M-1)*ci)+ cr) * P) + (dblquad(lambda w,x: (c*(K*M*T-x-w)) * (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(x+w)) * np.exp(-mi_falha*((K*M*T-(x+w)))), (K*M-1)*T, K*M*T, lambda x: 0, lambda x: K*M*T-x)[0])
+        Lifetime=((K*M*T) * P)
+        return Cost,Lifetime,P
+    
+    # CENÁRIO 43 - Defeito menor por CHOQUE na ith-1 inspeção, defeito maior DEGRADAÇÃO e substituição em KMT
+    def Scenario43():
+        P=(dblquad(lambda y,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(z+y)) * np.exp(-mi_falha*((K*M*T-(z+y)))), (K*M-1)*T, K*M*T, lambda z: 0, lambda z: K*M*T-z)[0])
+        Cost=((((K-1)*cb) + ((K)*(M-1)*ci)+ cr) * P) + (dblquad(lambda y,z: (c*(K*M*T-z-y)) * (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(z+y)) * np.exp(-mi_falha*((K*M*T-(z+y)))), (K*M-1)*T, K*M*T, lambda z: 0, lambda z: K*M*T-z)[0])
+        Lifetime=((K*M*T) * P)
+        return Cost, Lifetime,P
+    
+    # CENÁRIO 44 - Defeito menor por CHOQUE na ith-1 inspeção, defeito maior CHOQUE e substituição em KMT
+    def Scenario44():
+        P=(dblquad(lambda w,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(z+w)) * np.exp(-mi_falha*((K*M*T-(z+w)))), (K*M-1)*T, K*M*T, lambda z: 0, lambda z: K*M*T-z)[0])
+        Cost=((((K-1)*cb) + ((K)*(M-1)*ci)+ cr) * P) + (dblquad(lambda w,z: (c*(K*M*T-z-w)) * (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(z+w)) * np.exp(-mi_falha*((K*M*T-(z+w)))), (K*M-1)*T, K*M*T, lambda z: 0, lambda z: K*M*T-z)[0])
+        Lifetime=((K*M*T) * P)
+        return Cost,Lifetime,P
+    
+    # CENÁRIO 45 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO após falso negativo e substituição em KMT após um ou mais falso negativo
+    def Scenario45():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M):
+            P=(b**(M-i)) * (dblquad(lambda y,x: (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(x+y)) * np.exp(-mi_falha*((K*M*T-(x+y)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda x: (K*M-1)*T-x, lambda x: K*M*T-x)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P) + (b**(M-i)) * (dblquad(lambda y,x: (c*(K*M*T-x-y)) * (np.exp(-mi_menor*x) * fx(x)) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(x+y)) * np.exp(-mi_falha*((K*M*T-(x+y)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda x: (K*M-1)*T-x, lambda x: K*M*T-x)[0])
+            Lifetime+=((K*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 46 - Defeito menor DEGRADAÇÃO, defeito maior CHOQUE após falso negativo e substituição em KMT após um ou mais falso negativo
+    def Scenario46():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M):
+            P=(b**(M-i)) * (dblquad(lambda w,x: (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(x+w)) * np.exp(-mi_falha*((K*M*T-(x+w)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda x: (K*M-1)*T-x, lambda x: K*M*T-x)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P) + (b**(M-i)) * (dblquad(lambda w,x: (c*(K*M*T-x-w)) * (np.exp(-mi_menor*x) * fx(x)) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(x+w)) * np.exp(-mi_falha*((K*M*T-(x+w)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda x: (K*M-1)*T-x, lambda x: K*M*T-x)[0])
+            Lifetime+=((K*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 47 - Defeito menor CHOQUE, defeito maior DEGRADAÇÃO após falso negativo e substituição em KMT após um ou mais falso negativo
+    def Scenario47():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M):
+            P=(b**(M-i)) * (dblquad(lambda y,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(z+y)) * np.exp(-mi_falha*((K*M*T-(z+y)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda z: (K*M-1)*T-z, lambda z: K*M*T-z)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P) + (b**(M-i)) * (dblquad(lambda y,z: (c*(K*M*T-z-y)) *  (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (np.exp(-mi_maior*y) * fy(y)) * Rh(K*M*T-(z+y)) * np.exp(-mi_falha*((K*M*T-(z+y)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda z: (K*M-1)*T-z, lambda z: K*M*T-z)[0])
+            Lifetime+=((K*M * T) * P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+
+    # CENÁRIO 48 - Defeito menor CHOQUE, defeito maior CHOQUE após falso negativo e substituição em KMT após um ou mais falso negativo
+    def Scenario48():
+        Probability=0
+        Cost=0
+        Lifetime=0
+        for i in range(1,M):
+            P=(b**(M-i)) * (dblquad(lambda w,z: (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(z+w)) * np.exp(-mi_falha*((K*M*T-(z+w)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda z: (K*M-1)*T-z, lambda z: K*M*T-z)[0])
+            Cost+=((((K-1)* cb) + (K*(M-1) * ci)+ cr) * P) + (b**(M-i)) * (dblquad(lambda w,z: (c*(K*M*T-z-w)) *  (mi_menor*np.exp(-mi_menor*z) * (np.exp(-(z/n1)**b1))) * (mi_maior*np.exp(-mi_maior*w) * (np.exp(-(w/n2)**b2))) * Rh(K*M*T-(z+w)) * np.exp(-mi_falha*((K*M*T-(z+w)))), ((K-1)*M+(i-1))*T, ((K-1)*M+i)*T, lambda z: (K*M-1)*T-z, lambda z: K*M*T-z)[0])
+            Lifetime+=((K*M * T)*P)
+            Probability+=P
+        return Cost, Lifetime,Probability
+    
+    # CENÁRIO 49 - Componente sobrevive até KMT
+    def Scenario49():
+        P=quad(lambda x: fx(x) * np.exp(-mi_menor*(K*M*T)), K*M*T, np.inf)[0]
+        Cost=((K-1)*cb + (K*(M-1)*ci)+cr)*P
+        Lifetime=((K*M*T) * P)
+        return Cost,Lifetime,P
+    
+    C1=Scenario1()
+    C2=Scenario2()
+    C3=Scenario3()
+    C4=Scenario4()
+    C5=Scenario5()
+    C6=Scenario6()
+    C7=Scenario7()
+    C8=Scenario8()
+    C9=Scenario9()
+    C10=Scenario10()
+    C11=Scenario11()
+    C12=Scenario12()
+    C13=Scenario13()
+    C14=Scenario14()
+    C15=Scenario15()
+    C16=Scenario16()
+    C17=Scenario17()
+    C18=Scenario18()
+    C19=Scenario19()
+    C20=Scenario20()
+    C21=Scenario21()
+    C22=Scenario22()
+    C23=Scenario23()
+    C24=Scenario24()
+    C25=Scenario25()
+    C26=Scenario26()
+    C27=Scenario27()
+    C28=Scenario28()
+    C29=Scenario29()
+    C30=Scenario30()
+    C31=Scenario31()
+    C32=Scenario32()
+    C33=Scenario33()
+    C34=Scenario34()
+    C35=Scenario35()
+    C36=Scenario36()
+    C37=Scenario37()
+    C38=Scenario38()
+    C39=Scenario39()
+    C40=Scenario40()
+    C41=Scenario41()
+    C42=Scenario42()
+    C43=Scenario43()
+    C44=Scenario44()
+    C45=Scenario45()
+    C46=Scenario46()
+    C47=Scenario47()
+    C48=Scenario48()
+    C49=Scenario49()
+    
+    ec_total=C1[0]+C2[0]+C3[0]+C4[0]+C5[0]+C6[0]+C7[0]+C8[0]+C9[0]+C10[0]+C11[0]+C12[0]+C13[0]+C14[0]+C15[0]+C16[0]+C17[0]+C18[0]+C19[0]+C20[0]+C21[0]+C22[0]+C23[0]+C24[0]+C25[0]+C26[0]+C27[0]+C28[0]+C29[0]+C30[0]+C31[0]+C32[0]+C33[0]+C34[0]+C35[0]+C36[0]+C37[0]+C38[0]+C39[0]+C40[0]+C41[0]+C42[0]+C43[0]+C44[0]+C45[0]+C46[0]+C47[0]+C48[0]+C49[0]
+    el_total=C1[1]+C2[1]+C3[1]+C4[1]+C5[1]+C6[1]+C7[1]+C8[1]+C9[1]+C10[1]+C11[1]+C12[1]+C13[1]+C14[1]+C15[1]+C16[1]+C17[1]+C18[1]+C19[1]+C20[1]+C21[1]+C22[1]+C23[1]+C24[1]+C25[1]+C26[1]+C27[1]+C28[1]+C29[1]+C30[1]+C31[1]+C32[1]+C33[1]+C34[1]+C35[1]+C36[1]+C37[1]+C38[1]+C39[1]+C40[1]+C41[1]+C42[1]+C43[1]+C44[1]+C45[1]+C46[1]+C47[1]+C48[1]+C49[1]
+    # p_total=C1[2]+C2[2]+C3[2]+C4[2]+C5[2]+C6[2]+C7[2]+C8[2]+C9[2]+C10[2]+C11[2]+C12[2]+C13[2]+C14[2]+C15[2]+C16[2]+C17[2]+C18[2]+C19[2]+C20[2]+C21[2]+C22[2]+C23[2]+C24[2]+C25[2]+C26[2]+C27[2]+C28[2]+C29[2]+C30[2]+C31[2]+C32[2]+C33[2]+C34[2]+C35[2]+C36[2]+C37[2]+C38[2]+C39[2]+C40[2]+C41[2]+C42[2]+C43[2]+C44[2]+C45[2]+C46[2]+C47[2]+C48[2]+C49[2]
+    return ec_total,el_total#,p_total
+
+@njit
+def MinorDefect(n1, b1, mi_menor):
+    defeito_menor_degradacao = np.random.weibull(b1) * n1
+    defeito_menor_choque = np.random.exponential(1 / mi_menor)
+    return min(defeito_menor_degradacao, defeito_menor_choque)
+
+@njit
+def MajorDefect(n2, b2, mi_maior):
+    defeito_maior_degradacao = np.random.weibull(b2) * n2
+    defeito_maior_choque = np.random.exponential(1 / mi_maior)
+    return min(defeito_maior_degradacao, defeito_maior_choque)
+
+@njit
+def DelayTime(l_tx, mi_falha):
+    falha_degradacao = np.random.exponential(1 / l_tx)
+    falha_choque = np.random.exponential(1 / mi_falha)
+    return min(falha_degradacao, falha_choque)
+
+@njit(parallel=True)
+def Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c):
+    Cost=0
+    Lifetime=0
+    for i in prange(Runs):
+        Time=0.0
+        ####Generating the random variables####################################
+        X=MinorDefect(n1,b1,mi_menor)
+        Y=X + MajorDefect(n2,b2,mi_maior)
+        H=Y + DelayTime(l_tx, mi_falha)
+        ####Checking cases#####################################################
+        if (X>K*M*T): #Planned renovation at KMT
+            Cost+=(K-1)*cb + K*(M-1)*ci + cr
+            Time=K*M*T
+        else: #Minor defect happens before the planned renovation
+            Cost+=cb*(int(np.floor(np.floor(X/T)/M))) + ci*((int(np.floor(X/T)) - int(np.floor(np.floor(X/T)/M))))
+            Time=round((T*int(np.floor(X/T))) + T, 6)
+            ##Checking the cases before KMT####################################
+            Renovation=False
+            while (Time<Y and Renovation==False): #Advancing until major defect
+                if (Time==K*M*T):
+                    Renovation=True
+                    Cost+=cr
+                    break
+                else:
+                    Major=round(Time/T, 6)%M
+                    if (Major==0):
+                        Renovation=True
+                        Cost+=cb + cr
+                        break
+                    else:
+                        Random=np.random.random()
+                        if (Random>b):
+                            Renovation=True
+                            Cost+=ci + cr
+                            break
+                        else:
+                            Cost+=ci
+                    Time+=T
+                    Time=round(Time, 6)
+            ##If we reach major defect#########################################
+            while (Time<H and Renovation==False):
+                if (Time==K*M*T):
+                    Renovation=True
+                    Cost+=cr + c*(Time-Y)
+                    break
+                else:
+                    Major=round(Time/T, 6)%M
+                    if (Major==0):
+                        Renovation=True
+                        Cost+=cb + cr + c*(Time-Y)
+                        break
+                    else:
+                        Renovation=True
+                        Cost+=ci + cr + c*(Time-Y)
+                        break
+            ##Checking if there is a failure###################################
+            if (Renovation==False):
+                Cost+=cf + c*(H-Y)
+                Time=H
+        Lifetime+=Time
+    return Cost/Runs,Lifetime/Runs
+    
 def main():
     #criando 3 colunas
     col1, col2, col3= st.columns(3)
@@ -139,12 +782,12 @@ def main():
     #inserindo na coluna 2
     col2.image(foto, use_column_width=True)
     #O código abaixo centraliza e atribui cor
-    st.markdown("<h2 style='text-align: center; color: #306754;'>HyPAIRS - Hybrid Policy of Aperiodic Inspections and Replacement System</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #306754;'>AIM-SHOCK (Age-based and Inspection Maintenance under SHOCKs)</h2>", unsafe_allow_html=True)
     
     st.markdown("""
         <div style="background-color: #F3F3F3; padding: 10px; text-align: center;">
-          <p style="font-size: 20px; font-weight: bold;">An aperiodic inspection and replacement policy based on the delay-time model with component-lifetime heterogeneity</p>
-          <p style="font-size: 15px;">By: Victor H. R. Lima, Rafael, G. N. Paiva, Augusto J. S. Rodrigues, Hanser S. J. González & Cristiano A. V. Cavalcante</p>
+          <p style="font-size: 20px; font-weight: bold;">Multi-Level Inspection and Age-Based Maintenance under Shocks: A Simulation-Analytical Optimization Approach</p>
+          <p style="font-size: 15px;">By: Victor H. R. Lima, Eugênio A. S. Fischetti & Cristiano A. V. Cavalcante</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -157,24 +800,26 @@ def main():
         st.subheader("Insert the parameter values below:")
         
         global a2,b2,a1,b1,p,l,alfa,beta,ci,cr,cf,cd
-        a2=st.number_input("Insert the scale parameter for the defect arrival distribution of “strong” components (η\u2081)", min_value = 0.0, value = 3.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the defect arrival for the stronger component.")
-        b2=st.number_input("Insert the shape parameter for the defect arrival distribution of “strong” components (β\u2082)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter specifies the shape parameter for the Weibull distribution, representing the defect arrival for the stronger component.")
-        a1=st.number_input("Insert the scale parameter for the defect arrival distribution of “weak” components (η\u2081)", min_value = 3.0, value = 18.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the defect arrival for the weaker component.")
-        b1=st.number_input("Insert the shape parameter for the defect arrival distribution of “weak” components (β\u2082)", min_value = 1.0, max_value=5.0, value = 5.0, help="This parameter specifies the shape parameter for the Weibull distribution, representing the defect arrival for the weaker component.")
-        p=st.number_input("Insert the mixture parameter (p)", min_value = 0.0, max_value=1.0, value = 0.10, help="This parameter indicates the proportion of the weaker component within the total population of components.")
-        l=st.number_input("Insert the rate of the exponential distribution for delay-time (λ)", min_value = 0.0, value = 2.0, help="This parameter defines the rate of the Exponential distribution, which governs the transition from the defective to the failed state of a component.")
-        alfa=st.number_input("Insert the false-positive probability (\u03B1)", min_value = 0.0, max_value=1.0, value = 0.1, help="This parameter represents the probability of indicating a defect during inspection when, in fact, it does not exist.")
-        beta=st.number_input("Insert the false-negative probability (\u03B5)", min_value = 0.0, max_value=1.0, value = 0.15, help="This parameter represents the probability of not indicating a defect during inspection when, in fact, it does exist.")
+        n1=st.number_input("Insert the scale parameter for the defect arrival distribution of “strong” components (η\u2081)", min_value = 0.0, value = 3.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the defect arrival for the stronger component.")
+        b1=st.number_input("Insert the shape parameter for the defect arrival distribution of “strong” components (β\u2082)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter specifies the shape parameter for the Weibull distribution, representing the defect arrival for the stronger component.")
+        mi_menor=
+        n2=st.number_input("Insert the scale parameter for the defect arrival distribution of “weak” components (η\u2081)", min_value = 3.0, value = 18.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the defect arrival for the weaker component.")
+        b2=st.number_input("Insert the shape parameter for the defect arrival distribution of “weak” components (β\u2082)", min_value = 1.0, max_value=5.0, value = 5.0, help="This parameter specifies the shape parameter for the Weibull distribution, representing the defect arrival for the weaker component.")
+        mi_maior=
+        l_tx=st.number_input("Insert the rate of the exponential distribution for delay-time (λ)", min_value = 0.0, value = 2.0, help="This parameter defines the rate of the Exponential distribution, which governs the transition from the defective to the failed state of a component.")
+        mi_falha=
+        b=st.number_input("Insert the false-negative probability (\u03B5)", min_value = 0.0, max_value=1.0, value = 0.15, help="This parameter represents the probability of not indicating a defect during inspection when, in fact, it does exist.")
         ci=st.number_input("Insert cost of inspection (C_{I})", min_value = 0.0, value = 0.05, help="This parameter represents the cost of conducing an inspection.")
-        cr=st.number_input("Insert cost of replacement (inspections and age-based) (C_{R})", min_value = 0.0, value = 1.0, help="This parameter represents the cost associated with preventive replacements, whether performed during inspections or when the age-based threshold is reached.")
-        cf=st.number_input("Insert cost of failure (C_{F})", min_value = 0.0, value = 10.0, help="This parameter represents the replacement cost incurred when a component fails.")
-        cd=st.number_input("Insert cost of defective by time unit (C_{D})", min_value = 0.0, value = 0.01, help="This parameter represents the unitary cost associated with the time in which the component stays in defective state for each time unit.")
+        cb=st.number_input("Insert cost of replacement (inspections and age-based) (C_{R})", min_value = 0.0, value = 1.0, help="This parameter represents the cost associated with preventive replacements, whether performed during inspections or when the age-based threshold is reached.")
+        cr=st.number_input("Insert cost of failure (C_{F})", min_value = 0.0, value = 10.0, help="This parameter represents the replacement cost incurred when a component fails.")
+        c=st.number_input("Insert cost of defective by time unit (C_{D})", min_value = 0.0, value = 0.01, help="This parameter represents the unitary cost associated with the time in which the component stays in defective state for each time unit.")
+        c=st.number_input("Insert cost of defective by time unit (C_{D})", min_value = 0.0, value = 0.01, help="This parameter represents the unitary cost associated with the time in which the component stays in defective state for each time unit.")
         
         col1, col2 = st.columns(2)
         
         Delta=[0]
         st.subheader("Insert the variable values below:")
-        K=int(st.text_input("Insert the number of inspections (K)", value=4))
+        K=int(st.text_input("Insert the number of major inspections (K)", value=4))
         if (K<0):
             K=0
         Value=2
@@ -200,11 +845,7 @@ def main():
 
 v.h.r.lima@random.org.br
 
-r.g.n.paiva@random.org.br
-
-a.j.s.rodrigues@random.org.br
-
-h.s.j.gonzalez@random.org.br
+e.a.s.fischetti@random.org.br
 
 c.a.v.cavalcante@random.org.br
 
