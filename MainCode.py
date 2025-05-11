@@ -834,7 +834,7 @@ def main():
             st.write("---RESULT---")
             st.write("Cost-rate", Analytics_Cost_rate(K,M,T))
         else:
-            if botao:
+            if botao2:
                 st.write("---RESULT---")
                 st.write("Cost-rate", Simulation(K, M, T, 1000000, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
          
