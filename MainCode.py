@@ -832,7 +832,7 @@ def main():
         botao2 = st.button("Get cost-rate (simulated)")
         if botao:
             st.write("---RESULT---")
-            st.write("Cost-rate", Analytics_Cost_rate(K,M,T,n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
+            st.write("Cost-rate", Analytics_Cost_rate(K,M,T))
         else:
             if botao:
                 st.write("---RESULT---")
