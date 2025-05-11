@@ -4,6 +4,7 @@ import sys
 from streamlit import cli as stcli
 from scipy.integrate import quad #Single integral
 from scipy.integrate import dblquad
+from scipy.integrate import tplquad
 from PIL import Image
 from numba import njit, prange
 
