@@ -836,7 +836,7 @@ def main():
         else:
             if botao:
                 st.write("---RESULT---")
-                st.write("Cost-rate", Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
+                st.write("Cost-rate", Simulation(K, M, T, 1000000, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
          
     if choice == menu[1]:
         st.header(menu[1])
