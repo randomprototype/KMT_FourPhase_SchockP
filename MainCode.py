@@ -7,7 +7,7 @@ from scipy.integrate import dblquad
 from PIL import Image
 from numba import njit, prange
 
-def Analytics_Cost_rate(K,M,T):
+def Analytics_Cost_rate(K,M,T,n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c):
     # Funções preliminares (defeito, delaytime)
     def fx(x):
         return (b1/n1**b1)*(x**(b1-1))*np.exp(-(x/n1)**b1)
@@ -691,7 +691,7 @@ def Analytics_Cost_rate(K,M,T):
     ec_total=C1[0]+C2[0]+C3[0]+C4[0]+C5[0]+C6[0]+C7[0]+C8[0]+C9[0]+C10[0]+C11[0]+C12[0]+C13[0]+C14[0]+C15[0]+C16[0]+C17[0]+C18[0]+C19[0]+C20[0]+C21[0]+C22[0]+C23[0]+C24[0]+C25[0]+C26[0]+C27[0]+C28[0]+C29[0]+C30[0]+C31[0]+C32[0]+C33[0]+C34[0]+C35[0]+C36[0]+C37[0]+C38[0]+C39[0]+C40[0]+C41[0]+C42[0]+C43[0]+C44[0]+C45[0]+C46[0]+C47[0]+C48[0]+C49[0]
     el_total=C1[1]+C2[1]+C3[1]+C4[1]+C5[1]+C6[1]+C7[1]+C8[1]+C9[1]+C10[1]+C11[1]+C12[1]+C13[1]+C14[1]+C15[1]+C16[1]+C17[1]+C18[1]+C19[1]+C20[1]+C21[1]+C22[1]+C23[1]+C24[1]+C25[1]+C26[1]+C27[1]+C28[1]+C29[1]+C30[1]+C31[1]+C32[1]+C33[1]+C34[1]+C35[1]+C36[1]+C37[1]+C38[1]+C39[1]+C40[1]+C41[1]+C42[1]+C43[1]+C44[1]+C45[1]+C46[1]+C47[1]+C48[1]+C49[1]
     # p_total=C1[2]+C2[2]+C3[2]+C4[2]+C5[2]+C6[2]+C7[2]+C8[2]+C9[2]+C10[2]+C11[2]+C12[2]+C13[2]+C14[2]+C15[2]+C16[2]+C17[2]+C18[2]+C19[2]+C20[2]+C21[2]+C22[2]+C23[2]+C24[2]+C25[2]+C26[2]+C27[2]+C28[2]+C29[2]+C30[2]+C31[2]+C32[2]+C33[2]+C34[2]+C35[2]+C36[2]+C37[2]+C38[2]+C39[2]+C40[2]+C41[2]+C42[2]+C43[2]+C44[2]+C45[2]+C46[2]+C47[2]+C48[2]+C49[2]
-    return ec_total,el_total#,p_total
+    return ec_total/el_total#,p_total
 
 @njit
 def MinorDefect(n1, b1, mi_menor):
@@ -772,7 +772,7 @@ def Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha
                 Cost+=cf + c*(H-Y)
                 Time=H
         Lifetime+=Time
-    return Cost/Runs,Lifetime/Runs
+    return Cost/Lifetime
     
 def main():
     #criando 3 colunas
@@ -832,7 +832,7 @@ def main():
         botao2 = st.button("Get cost-rate (simulated)")
         if botao:
             st.write("---RESULT---")
-            st.write("Cost-rate", Analytics_Cost_rate(K,M,T))
+            st.write("Cost-rate", Analytics_Cost_rate(K,M,T,n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
         else:
             if botao:
                 st.write("---RESULT---")
