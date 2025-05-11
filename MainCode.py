@@ -27,7 +27,7 @@ def Analytics_Cost_rate(K,M,T,n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha
         return np.exp(-l_tx*h)
 
     # CENÁRIO 1 - Defeito menor DEGRADAÇÃO, defeito maior DEGRADAÇÃO e falha DEGRADAÇÃO chegam entre inspeções menores
-    def Scenario1():
+    def Scenario1(mi_menor,mi_maior):
         Probability=0
         Cost=0
         Lifetime=0
