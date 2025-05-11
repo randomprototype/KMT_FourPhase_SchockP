@@ -803,10 +803,10 @@ def main():
         n1=st.number_input("Insert the scale parameter for the minor defect arrival (η\u2081)", min_value = 0.0, value = 10.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the minor defect arrival.")
         b1=st.number_input("Insert the shape parameter for the minor defect arrival (β\u2081)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter specifies the shape parameter for the Weibull distribution, representing the minor defect arrival.")
         mi_menor=st.number_input("Insert rate of the exponential distribution for shocks during the good-phase (λ\u2081)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter specifies the mean rate for the shock arrival during the good-phase.")
-        n2=st.number_input("Insert the scale parameter for the major defect arrival (η\u2081)", min_value = 0.0, value = 5.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the major defect arrival.")
+        n2=st.number_input("Insert the scale parameter for the major defect arrival (η\u2082)", min_value = 0.0, value = 5.0, help="This parameter specifies the scale parameter for the Weibull distribution, representing the major defect arrival.")
         b2=st.number_input("Insert the shape parameter for the major defect arrival (β\u2082)", min_value = 1.0, max_value=5.0, value = 5.0, help="This parameter specifies the shape parameter for the Weibull distribution, representing the major defect arrival.")
         mi_maior=st.number_input("Insert rate of the exponential distribution for shocks during the minor-degradation phase (λ\u2082)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter specifies the mean rate for the shock arrival during the minor-degradation phase.")
-        l_tx=st.number_input("Insert the rate of the exponential distribution for delay-time (κ)", min_value = 0.0, value = 2.0, help="This parameter defines the rate of the Exponential distribution, which governs the transition from the major defective to the failed state.")
+        l_tx=st.number_input("Insert the rate of the exponential distribution for delay-time (η\u2083)", min_value = 0.0, value = 2.0, help="This parameter defines the rate of the Exponential distribution, which governs the transition from the major defective to the failed state.")
         mi_falha=st.number_input("Insert the rate of the exponential distribution for shocks during the major-degradation phase (λ\u2083)", min_value = 1.0, max_value=5.0, value = 2.5, help="This parameter defines the rate of the Exponential distribution for shock arrival during the major-degradation phase.")
         
         b=st.number_input("Insert the false-negative probability for minor inspection (b)", min_value = 0.0, max_value=1.0, value = 0.15, help="This parameter represents the probability of not indicating a minor defect during the minor inspection when, in fact, it does exist.")
@@ -818,23 +818,25 @@ def main():
         
         col1, col2 = st.columns(2)
         
-        Delta=[0]
         st.subheader("Insert the variable values below:")
         K=int(st.text_input("Insert the number of major inspections (K)", value=4))
-        if (K<0):
-            K=0
-        Value=2
-        if (K>0):
-            for i, col in enumerate(st.columns(K)):
-                col.write(f"**{i+1}-th inspection:**")
-                Delta.append(col.number_input("Insp. Mom. (Δ)", value=Value*(i+1), min_value=Delta[i-1], key=f"Delta_{i}"))
-        T = st.number_input("Insert the moment for the age-based preventive action (T)",value=(K+1)*Value,min_value=Delta[-1])
+        if (K<1):
+            K=1
+        M=int(st.text_input("Insert the number of minor inspections between two major inspections or the major inspection and age-based moment (M)", value=4))
+        if (M<1):
+            M=1
+        T=st.number_input("Insert the interval between maintenance actions (T)",value=0.8000)
         
-        st.subheader("Click on botton below to run this application:")    
-        botao = st.button("Get cost-rate")
+        st.subheader("Click on one of the bottons below to run the analytical or simulation-based model:")    
+        botao = st.button("Get cost-rate (analytically)")
+        botao2 = st.button("Get cost-rate (simulated)")
         if botao:
             st.write("---RESULT---")
-            st.write("Cost-rate", KD_KT(K, Delta, T))
+            st.write("Cost-rate", Analytics_Cost_rate(K,M,T))
+        else:
+            if botao:
+                st.write("---RESULT---")
+                st.write("Cost-rate", Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c))
          
     if choice == menu[1]:
         st.header(menu[1])
