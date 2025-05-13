@@ -714,6 +714,7 @@ def DelayTime(l_tx, mi_falha):
 
 @njit(parallel=True)
 def Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha, b, cb, ci, cr, cf, c):
+    ####Begining simulation####################################################
     Cost=0
     Lifetime=0
     for i in prange(Runs):
@@ -728,17 +729,16 @@ def Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha
             Time=K*M*T
         else: #Minor defect happens before the planned renovation
             Cost+=cb*(int(np.floor(np.floor(X/T)/M))) + ci*((int(np.floor(X/T)) - int(np.floor(np.floor(X/T)/M))))
-            Time=round((T*int(np.floor(X/T))) + T, 6)
+            Time=round((T*int(np.floor(X/T))) + T, 4)
             ##Checking the cases before KMT####################################
             Renovation=False
             while (Time<Y and Renovation==False): #Advancing until major defect
-                if (Time==K*M*T):
+                if (Time==round(K*M*T,14)):
                     Renovation=True
                     Cost+=cr
                     break
                 else:
-                    Major=round(Time/T, 6)%M
-                    if (Major==0):
+                    if (round(Time/T, 9)%M==0):
                         Renovation=True
                         Cost+=cb + cr
                         break
@@ -751,16 +751,15 @@ def Simulation(K, M, T, Runs, n1, b1, mi_menor, n2, b2, mi_maior, l_tx, mi_falha
                         else:
                             Cost+=ci
                     Time+=T
-                    Time=round(Time, 6)
+                    Time=round(Time, 4)
             ##If we reach major defect#########################################
             while (Time<H and Renovation==False):
-                if (Time==K*M*T):
+                if (Time==round(K*M*T,14)):
                     Renovation=True
                     Cost+=cr + c*(Time-Y)
                     break
                 else:
-                    Major=round(Time/T, 6)%M
-                    if (Major==0):
+                    if (round(Time/T, 9)%M==0):
                         Renovation=True
                         Cost+=cb + cr + c*(Time-Y)
                         break
